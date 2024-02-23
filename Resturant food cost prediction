@@ -1,0 +1,341 @@
+import re
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import warnings
+warnings.filterwarnings('ignore')
+Import datasets
+train = pd.read_excel('Data_Train.xlsx')
+test = pd.read_excel('Data_Test.xlsx')
+train.shape, test.shape
+((12690, 9), (4231, 8))
+Data exploration
+# check for duplicate records... didn't remove the duplicate records as it was bringing score down
+train.duplicated().sum(), test.duplicated().sum()
+#train.drop_duplicates(keep='first', inplace=True)
+#train.reset_index(inplace=True)
+#test.drop_duplicates(keep='first', inplace=True)
+#test.reset_index(inplace=True)
+(25, 1)
+train.head()
+TITLE	RESTAURANT_ID	CUISINES	TIME	CITY	LOCALITY	RATING	VOTES	COST
+0	CASUAL DINING	9438	Malwani, Goan, North Indian	11am – 4pm, 7:30pm – 11:30pm (Mon-Sun)	Thane	Dombivali East	3.6	49 votes	1200
+1	CASUAL DINING,BAR	13198	Asian, Modern Indian, Japanese	6pm – 11pm (Mon-Sun)	Chennai	Ramapuram	4.2	30 votes	1500
+2	CASUAL DINING	10915	North Indian, Chinese, Biryani, Hyderabadi	11am – 3:30pm, 7pm – 11pm (Mon-Sun)	Chennai	Saligramam	3.8	221 votes	800
+3	QUICK BITES	6346	Tibetan, Chinese	11:30am – 1am (Mon-Sun)	Mumbai	Bandra West	4.1	24 votes	800
+4	DESSERT PARLOR	15387	Desserts	11am – 1am (Mon-Sun)	Mumbai	Lower Parel	3.8	165 votes	300
+train.info()
+#train.isnull().sum()
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 12690 entries, 0 to 12689
+Data columns (total 9 columns):
+TITLE            12690 non-null object
+RESTAURANT_ID    12690 non-null int64
+CUISINES         12690 non-null object
+TIME             12690 non-null object
+CITY             12578 non-null object
+LOCALITY         12592 non-null object
+RATING           12688 non-null object
+VOTES            11486 non-null object
+COST             12690 non-null int64
+dtypes: int64(2), object(7)
+memory usage: 892.3+ KB
+for i in train.columns:
+    print("Unique values in", i, train[i].nunique())
+Unique values in TITLE 113
+Unique values in RESTAURANT_ID 11892
+Unique values in CUISINES 4155
+Unique values in TIME 2689
+Unique values in CITY 359
+Unique values in LOCALITY 1416
+Unique values in RATING 32
+Unique values in VOTES 1847
+Unique values in COST 86
+Data pre-processing
+# merge train and test
+df = train.append(test,ignore_index=True)
+df = df[['TITLE', 'CUISINES', 'TIME', 'CITY', 'LOCALITY', 'RATING', 'VOTES', 'COST']]
+def extract_closed(time):
+    a = re.findall('Closed \(.*?\)', time)
+    if a != []:
+        return a[0]
+    else:
+        return 'NA'
+
+df['CLOSED'] = df['TIME'].apply(extract_closed)
+df['TIME'] = df['TIME'].str.replace(r'Closed \(.*?\)','')
+#df['TIME'] = df['TIME'].str.replace(r'Closed...','')
+df['RATING'] = df['RATING'].str.replace('NEW', '1')
+df['RATING'] = df['RATING'].str.replace('-', '1').astype(float)
+df['VOTES'] = df['VOTES'].str.replace(' votes', '').astype(float)
+df['CITY'].fillna('Missing', inplace=True)  
+df['LOCALITY'].fillna('Missing', inplace=True)  
+df['RATING'].fillna(3.8, inplace=True)  
+df['VOTES'].fillna(0.0, inplace=True) 
+df['COST'] = df['COST'].astype(float)
+df.head(2)
+TITLE	CUISINES	TIME	CITY	LOCALITY	RATING	VOTES	COST	CLOSED
+0	CASUAL DINING	Malwani, Goan, North Indian	11am – 4pm, 7:30pm – 11:30pm (Mon-Sun)	Thane	Dombivali East	3.6	49.0	1200.0	NA
+1	CASUAL DINING,BAR	Asian, Modern Indian, Japanese	6pm – 11pm (Mon-Sun)	Chennai	Ramapuram	4.2	30.0	1500.0	NA
+df['TITLE'].nunique(), df['CUISINES'].nunique()
+(123, 5183)
+calc_mean = df.groupby(['CITY'], axis=0).agg({'RATING': 'mean'}).reset_index()
+calc_mean.columns = ['CITY','CITY_MEAN_RATING']
+df = df.merge(calc_mean, on=['CITY'],how='left')
+
+calc_mean = df.groupby(['LOCALITY'], axis=0).agg({'RATING': 'mean'}).reset_index()
+calc_mean.columns = ['LOCALITY','LOCALITY_MEAN_RATING']
+df = df.merge(calc_mean, on=['LOCALITY'],how='left')
+df.head(2)
+TITLE	CUISINES	TIME	CITY	LOCALITY	RATING	VOTES	COST	CLOSED	CITY_MEAN_RATING	LOCALITY_MEAN_RATING
+0	CASUAL DINING	Malwani, Goan, North Indian	11am – 4pm, 7:30pm – 11:30pm (Mon-Sun)	Thane	Dombivali East	3.6	49.0	1200.0	NA	3.376271	3.388889
+1	CASUAL DINING,BAR	Asian, Modern Indian, Japanese	6pm – 11pm (Mon-Sun)	Chennai	Ramapuram	4.2	30.0	1500.0	NA	3.584588	3.472222
+from sklearn.feature_extraction.text import TfidfVectorizer
+tf1 = TfidfVectorizer(ngram_range=(1, 1), lowercase=True)
+df_title = tf1.fit_transform(df['TITLE'])
+df_title = pd.DataFrame(data=df_title.toarray(), columns=tf1.get_feature_names())
+
+tf2 = TfidfVectorizer(ngram_range=(1, 1), lowercase=True)
+df_cuisines = tf2.fit_transform(df['CUISINES'])
+df_cuisines = pd.DataFrame(data=df_cuisines.toarray(), columns=tf2.get_feature_names())
+
+tf3 = TfidfVectorizer(ngram_range=(1, 1), lowercase=True)
+df_city = tf3.fit_transform(df['CITY'])
+df_city = pd.DataFrame(data=df_city.toarray(), columns=tf3.get_feature_names())
+
+tf4 = TfidfVectorizer(ngram_range=(1, 1), lowercase=True)
+df_locality = tf4.fit_transform(df['LOCALITY'])
+df_locality = pd.DataFrame(data=df_locality.toarray(), columns=tf4.get_feature_names())
+
+tf5 = TfidfVectorizer(ngram_range=(1, 1), lowercase=True)
+df_time = tf5.fit_transform(df['TIME'])
+df_time = pd.DataFrame(data=df_time.toarray(), columns=tf5.get_feature_names())
+df.head(2)
+TITLE	CUISINES	TIME	CITY	LOCALITY	RATING	VOTES	COST	CLOSED	CITY_MEAN_RATING	LOCALITY_MEAN_RATING
+0	CASUAL DINING	Malwani, Goan, North Indian	11am – 4pm, 7:30pm – 11:30pm (Mon-Sun)	Thane	Dombivali East	3.6	49.0	1200.0	NA	3.376271	3.388889
+1	CASUAL DINING,BAR	Asian, Modern Indian, Japanese	6pm – 11pm (Mon-Sun)	Chennai	Ramapuram	4.2	30.0	1500.0	NA	3.584588	3.472222
+df = pd.concat([df, df_title, df_cuisines, df_city, df_locality, df_time], axis=1) 
+df.drop(['TITLE', 'CUISINES', 'CITY', 'LOCALITY', 'TIME'], axis=1, inplace=True)
+df = pd.get_dummies(df, columns=['CLOSED'], drop_first=True)
+df.shape
+(16921, 2285)
+train_df = df[df['COST'].isnull()!=True]
+test_df = df[df['COST'].isnull()==True]
+test_df.drop('COST', axis=1, inplace=True)
+train_df.shape, test_df.shape
+((12690, 2285), (4231, 2284))
+train_df['COST'] = np.log1p(train_df['COST'])
+Train test split
+X = train_df.drop(labels=['COST'], axis=1)
+y = train_df['COST'].values
+
+from sklearn.model_selection import train_test_split
+X_train, X_cv, y_train, y_cv = train_test_split(X, y, test_size=0.25, random_state=1)
+X_train.shape, y_train.shape, X_cv.shape, y_cv.shape
+((9517, 2284), (9517,), (3173, 2284), (3173,))
+Build the model
+from math import sqrt 
+from sklearn.metrics import mean_squared_log_error
+import lightgbm as lgb
+train_data = lgb.Dataset(X_train, label=y_train)
+test_data = lgb.Dataset(X_cv, label=y_cv)
+
+param = {'objective': 'regression',
+         'boosting': 'gbdt',  
+         'metric': 'l2_root',
+         'learning_rate': 0.05, 
+         'num_iterations': 350,
+         'num_leaves': 31,
+         'max_depth': -1,
+         'min_data_in_leaf': 15,
+         'bagging_fraction': 0.85,
+         'bagging_freq': 1,
+         'feature_fraction': 0.55
+         }
+
+lgbm = lgb.train(params=param,
+                 verbose_eval=50,
+                 train_set=train_data,
+                 valid_sets=[test_data])
+
+y_pred_lgbm = lgbm.predict(X_cv)
+print('RMSLE:', sqrt(mean_squared_log_error(np.exp(y_cv), np.exp(y_pred_lgbm))))
+[50]	valid_0's rmse: 0.374992
+[100]	valid_0's rmse: 0.354891
+[150]	valid_0's rmse: 0.351117
+[200]	valid_0's rmse: 0.34932
+[250]	valid_0's rmse: 0.348682
+[300]	valid_0's rmse: 0.348451
+[350]	valid_0's rmse: 0.348393
+RMSLE: 0.34738450721214525
+from sklearn.ensemble import BaggingRegressor
+br = BaggingRegressor(base_estimator=None, n_estimators=30, max_samples=0.9, max_features=1.0, bootstrap=True, 
+                      bootstrap_features=True, oob_score=True, warm_start=False, n_jobs=1, random_state=42, verbose=1)
+br.fit(X_train, y_train)
+y_pred_br = br.predict(X_cv)
+print('RMSLE:', sqrt(mean_squared_log_error(np.exp(y_cv), np.exp(y_pred_br))))
+[Parallel(n_jobs=1)]: Done   1 out of   1 | elapsed:   29.6s finished
+RMSLE: 0.35787401792256457
+[Parallel(n_jobs=1)]: Done   1 out of   1 | elapsed:    2.1s finished
+from sklearn.ensemble import RandomForestRegressor
+rf = RandomForestRegressor(n_estimators=40, criterion='mse', max_depth=None, min_samples_split=4, min_samples_leaf=1, 
+                           min_weight_fraction_leaf=0.0, max_features='auto', max_leaf_nodes=None, 
+                           min_impurity_decrease=0.0, min_impurity_split=None, bootstrap=True, oob_score=False, n_jobs=1, 
+                           random_state=42, verbose=1, warm_start=False)
+rf.fit(X_train, y_train)
+y_pred_rf = rf.predict(X_cv)
+print('RMSLE:', sqrt(mean_squared_log_error(np.exp(y_cv), np.exp(y_pred_rf))))
+RMSLE: 0.3615527439751424
+[Parallel(n_jobs=1)]: Done  40 out of  40 | elapsed:   33.8s finished
+[Parallel(n_jobs=1)]: Done  40 out of  40 | elapsed:    0.0s finished
+y_pred = y_pred_lgbm*0.70 + y_pred_br*0.15 +  y_pred_rf*0.15
+print('RMSLE:', sqrt(mean_squared_log_error(np.exp(y_cv), np.exp(y_pred))))
+RMSLE: 0.34521123762900163
+Predict on test set
+#Xtrain = train_df.drop(labels='COST', axis=1)
+#ytrain = train_df['COST'].values
+Xtest = test_df
+#Xtrain.shape, ytrain.shape, Xtest.shape
+from sklearn.model_selection import KFold, RepeatedKFold
+from lightgbm import LGBMRegressor
+
+errlgb = []
+y_pred_totlgb = []
+
+fold = KFold(n_splits=15, shuffle=True, random_state=42)
+
+for train_index, test_index in fold.split(X):
+    X_train, X_test = X.loc[train_index], X.loc[test_index]
+    y_train, y_test = y[train_index], y[test_index]
+
+    param = {'objective': 'regression',
+             'boosting': 'gbdt',
+             'metric': 'l2_root',
+             'learning_rate': 0.05,
+             'num_iterations': 350,
+             'num_leaves': 31,
+             'max_depth': -1,
+             'min_data_in_leaf': 15,
+             'bagging_fraction': 0.85,
+             'bagging_freq': 1,
+             'feature_fraction': 0.55
+             }
+
+    lgbm = LGBMRegressor(**param)
+    lgbm.fit(X_train, y_train,
+             eval_set=[(X_test, y_test)],
+             verbose=0,
+             early_stopping_rounds=100
+             )
+
+    y_pred_lgbm = lgbm.predict(X_test)
+    print("RMSE LGBM: ", sqrt(mean_squared_log_error(np.exp(y_test), np.exp(y_pred_lgbm))))
+
+    errlgb.append(sqrt(mean_squared_log_error(np.exp(y_test), np.exp(y_pred_lgbm))))
+    p = lgbm.predict(Xtest)
+    y_pred_totlgb.append(p)
+RMSE LGBM:  0.34634770050754055
+RMSE LGBM:  0.36050434904910617
+RMSE LGBM:  0.3383243912986553
+RMSE LGBM:  0.33998775736443887
+RMSE LGBM:  0.33229233133671693
+RMSE LGBM:  0.32279425561136116
+RMSE LGBM:  0.3602566417201069
+RMSE LGBM:  0.3704199555700122
+RMSE LGBM:  0.34912114067345773
+RMSE LGBM:  0.32760152567269174
+RMSE LGBM:  0.33708072185778504
+RMSE LGBM:  0.34559951492494834
+RMSE LGBM:  0.32591077296431276
+RMSE LGBM:  0.34830474891636404
+RMSE LGBM:  0.3599866766115413
+from sklearn.model_selection import KFold
+from sklearn.ensemble import BaggingRegressor
+
+err_br = []
+y_pred_totbr = []
+
+fold = KFold(n_splits=15, shuffle=True, random_state=42)
+
+for train_index, test_index in fold.split(X):
+    X_train, X_test = X.loc[train_index], X.loc[test_index]
+    y_train, y_test = y[train_index], y[test_index]
+
+    br = BaggingRegressor(base_estimator=None, n_estimators=30, max_samples=1.0, max_features=1.0, bootstrap=True,
+                          bootstrap_features=True, oob_score=False, warm_start=False, n_jobs=1, random_state=42, verbose=0)
+    
+    br.fit(X_train, y_train)
+    y_pred_br = br.predict(X_test)
+
+    print("RMSE BR:", sqrt(mean_squared_log_error(np.exp(y_test), np.exp(y_pred_br))))
+
+    err_br.append(sqrt(mean_squared_log_error(np.exp(y_test), np.exp(y_pred_br))))
+    p = br.predict(Xtest)
+    y_pred_totbr.append(p)
+RMSE BR: 0.3586752213659628
+RMSE BR: 0.3613894726323447
+RMSE BR: 0.35115535979189344
+RMSE BR: 0.35330944102506
+RMSE BR: 0.33892514866656537
+RMSE BR: 0.3341160573007311
+RMSE BR: 0.3621614543958501
+RMSE BR: 0.37955509241233865
+RMSE BR: 0.35564940402710205
+RMSE BR: 0.33996481911445625
+RMSE BR: 0.344823540560161
+RMSE BR: 0.3590083435406006
+RMSE BR: 0.34023130042067395
+RMSE BR: 0.35848761007799596
+RMSE BR: 0.37049599562689933
+from sklearn.model_selection import KFold
+from sklearn.ensemble import RandomForestRegressor
+
+err_rf = []
+y_pred_totrf = []
+
+fold = KFold(n_splits=15, shuffle=True, random_state=42)
+
+for train_index, test_index in fold.split(X):
+    X_train, X_test = X.loc[train_index], X.loc[test_index]
+    y_train, y_test = y[train_index], y[test_index]
+
+    rf = RandomForestRegressor(n_estimators=40, criterion='mse', max_depth=None, min_samples_split=4, min_samples_leaf=1, 
+                           min_weight_fraction_leaf=0.0, max_features='auto', max_leaf_nodes=None, 
+                           min_impurity_decrease=0.0, min_impurity_split=None, bootstrap=True, oob_score=False, n_jobs=1, 
+                           random_state=42, verbose=0, warm_start=False)
+    rf.fit(X_train, y_train)
+    y_pred_rf = rf.predict(X_test)
+
+    print("RMSE RF: ", sqrt(mean_squared_log_error(np.exp(y_test), np.exp(y_pred_rf))))
+
+    err_rf.append(sqrt(mean_squared_log_error(np.exp(y_test), np.exp(y_pred_rf))))
+    p = rf.predict(Xtest)
+    y_pred_totrf.append(p)
+RMSE RF:  0.36614000254463974
+RMSE RF:  0.3683591687547315
+RMSE RF:  0.3517377927047469
+RMSE RF:  0.35388720704961274
+RMSE RF:  0.3442536101451444
+RMSE RF:  0.33876558258256856
+RMSE RF:  0.37353126815110077
+RMSE RF:  0.38011361519234643
+RMSE RF:  0.3654908935046804
+RMSE RF:  0.35043560011157937
+RMSE RF:  0.3553517669006067
+RMSE RF:  0.3626059642439505
+RMSE RF:  0.3481312253297813
+RMSE RF:  0.36696439924366425
+RMSE RF:  0.37410589750504164
+np.mean(errlgb,0), np.mean(err_br,0), np.mean(err_rf,0)
+(0.3443021656052692, 0.35386321739724236, 0.35999159959761307)
+lgbm_final = np.exp(np.mean(y_pred_totlgb,0))
+br_final = np.exp(np.mean(y_pred_totbr,0))
+rf_final = np.exp(np.mean(y_pred_totrf,0))
+y_pred = (lgbm_final*0.70 + br_final*0.215 + rf_final*.15) 
+y_pred
+array([1089.08087315,  406.3628336 ,  717.44554087, ...,  418.31530824,
+        253.66263228,  401.25693405])
+df_sub = pd.DataFrame(data=y_pred, columns=['COST'])
+writer = pd.ExcelWriter('Output.xlsx', engine='xlsxwriter')
+df_sub.to_excel(writer,sheet_name='Sheet1', index=False)
+writer.save()
